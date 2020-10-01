@@ -6,16 +6,21 @@ import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.Context;
 import android.content.Intent;
+import android.database.ContentObserver;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
+import android.os.Handler;
 import android.provider.BaseColumns;
 import android.provider.ContactsContract;
 import android.text.TextUtils;
 import android.util.Log;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -35,6 +40,7 @@ import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 import io.flutter.plugin.common.BinaryMessenger;
+import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
@@ -57,12 +63,18 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
   private static final int FORM_COULD_NOT_BE_OPEN = 2;
 
   private static final String LOG_TAG = "flutter_contacts";
+  private static final String CONTACTS_EVENTS_CHANNEL = "github.com/clovisnicolas/flutter_contacts/contacts_event_channel";
+
   private ContentResolver contentResolver;
   private MethodChannel methodChannel;
+  private EventChannel contactsEventChannel;
+  private ContactsStreamHandler contactsStreamHandler;
   private BaseContactsServiceDelegate delegate;
+  private boolean registeredObserver = false;
 
   private final ExecutorService executor =
           new ThreadPoolExecutor(0, 10, 60, TimeUnit.SECONDS, new ArrayBlockingQueue<Runnable>(1000));
+  private Context appContext;
 
   private void initDelegateWithRegister(Registrar registrar) {
     this.delegate = new ContactServiceDelegateOld(registrar);
@@ -77,19 +89,25 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
   private void initInstance(BinaryMessenger messenger, Context context) {
     methodChannel = new MethodChannel(messenger, "github.com/clovisnicolas/flutter_contacts");
     methodChannel.setMethodCallHandler(this);
+    contactsEventChannel = new EventChannel(messenger, CONTACTS_EVENTS_CHANNEL);
+    contactsStreamHandler = new ContactsStreamHandler();
+    contactsEventChannel.setStreamHandler(contactsStreamHandler);
     this.contentResolver = context.getContentResolver();
   }
 
   @Override
   public void onAttachedToEngine(FlutterPluginBinding binding) {
+    this.appContext = binding.getApplicationContext();
     initInstance(binding.getBinaryMessenger(), binding.getApplicationContext());
     this.delegate = new ContactServiceDelegate(binding.getApplicationContext());
   }
 
   @Override
   public void onDetachedFromEngine(FlutterPluginBinding binding) {
+    appContext = null;
     methodChannel.setMethodCallHandler(null);
     methodChannel = null;
+    contactsStreamHandler = null;
     contentResolver = null;
     this.delegate = null;
   }
@@ -98,7 +116,10 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
   public void onMethodCall(MethodCall call, Result result) {
     switch(call.method){
       case "getContacts": {
-        this.getContacts(call.method, (String)call.argument("query"), (boolean)call.argument("withThumbnails"), (boolean)call.argument("photoHighResolution"), (boolean)call.argument("orderByGivenName"), result);
+        this.getContacts(call.method, (String) call.argument("query"), (boolean) call.argument("withThumbnails"), (boolean) call.argument("photoHighResolution"), (boolean) call.argument("orderByGivenName"), result);
+        break;
+      } case "listenContacts": {
+        this.listenContacts(call.method, (String)call.argument("query"), (boolean)call.argument("withThumbnails"), (boolean)call.argument("photoHighResolution"), (boolean)call.argument("orderByGivenName"), result);
         break;
       } case "getContactsForPhone": {
         this.getContactsForPhone(call.method, (String)call.argument("phone"), (boolean)call.argument("withThumbnails"), (boolean)call.argument("photoHighResolution"), (boolean)call.argument("orderByGivenName"), result);
@@ -133,17 +154,19 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
         break;
       } case "openExistingContact" :{
         final Contact contact = Contact.fromMap((HashMap)call.argument("contact"));
+        Boolean edit = call.argument("edit");
         if (delegate != null) {
           delegate.setResult(result);
-          delegate.openExistingContact(contact);
+          delegate.openExistingContact(contact, edit);
         } else {
           result.success(FORM_COULD_NOT_BE_OPEN);
         }
         break;
       } case "openContactForm": {
         if (delegate != null) {
+          String phone = call.argument("phone");
           delegate.setResult(result);
-          delegate.openContactForm();
+          delegate.openContactForm(phone);
         } else {
           result.success(FORM_COULD_NOT_BE_OPEN);
         }
@@ -199,12 +222,22 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
     new GetContactsTask(callMethod, result, withThumbnails, photoHighResolution, orderByGivenName).executeOnExecutor(executor, query, false);
   }
 
+  @TargetApi(Build.VERSION_CODES.ECLAIR)
+  private void listenContacts(final String callMethod, final String query, final boolean withThumbnails, final boolean photoHighResolution, final boolean orderByGivenName, Result result) {
+//    getContacts(callMethod, query, withThumbnails, photoHighResolution, orderByGivenName, new StreamResult(contactsStreamHandler.eventSink));
+    if (!registeredObserver) {
+      //TODO notifyForDescendants true or false?
+      contentResolver.registerContentObserver(ContactsContract.Data.CONTENT_URI, true, new MyContentObserver(new Handler()));
+      registeredObserver = true;
+    }
+    result.success(null);
+  }
   private void getContactsForPhone(String callMethod, String phone, boolean withThumbnails, boolean photoHighResolution, boolean orderByGivenName, Result result) {
     new GetContactsTask(callMethod, result, withThumbnails, photoHighResolution, orderByGivenName).executeOnExecutor(executor, phone, true);
   }
 
   @Override
-  public void onAttachedToActivity(ActivityPluginBinding binding) {
+  public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
     if (delegate instanceof  ContactServiceDelegate) {
       ((ContactServiceDelegate) delegate).bindToActivity(binding);
     }
@@ -218,7 +251,7 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
   }
 
   @Override
-  public void onReattachedToActivityForConfigChanges(ActivityPluginBinding binding) {
+  public void onReattachedToActivityForConfigChanges(@NonNull ActivityPluginBinding binding) {
     if (delegate instanceof  ContactServiceDelegate) {
       ((ContactServiceDelegate) delegate).bindToActivity(binding);
     }
@@ -282,14 +315,14 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
       return false;
     }
 
-    void openExistingContact(Contact contact) {
+    void openExistingContact(Contact contact, Boolean edit) {
       String identifier = contact.identifier;
       try {
         HashMap contactMapFromDevice = getContactByIdentifier(identifier);
         // Contact existence check
         if(contactMapFromDevice != null) {
           Uri uri = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, identifier);
-          Intent intent = new Intent(Intent.ACTION_EDIT);
+          Intent intent = new Intent(edit ? Intent.ACTION_EDIT : Intent.ACTION_VIEW);
           intent.setDataAndType(uri, ContactsContract.Contacts.CONTENT_ITEM_TYPE);
           intent.putExtra("finishActivityOnSaveCompleted", true);
           startIntent(intent, REQUEST_OPEN_EXISTING_CONTACT);
@@ -301,12 +334,18 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
       }
     }
 
-    void openContactForm() {
+    void openContactForm(String phone) {
       try {
-        Intent intent = new Intent(Intent.ACTION_INSERT, ContactsContract.Contacts.CONTENT_URI);
+//        Intent intent = new Intent(Intent.ACTION_INSERT, ContactsContract.Contacts.CONTENT_URI);
+        Intent intent = new Intent(Intent.ACTION_INSERT_OR_EDIT);
+        intent.setType(ContactsContract.Contacts.CONTENT_ITEM_TYPE);
+        if (phone != null) {
+          intent.putExtra(ContactsContract.Intents.Insert.PHONE, phone);
+        }
         intent.putExtra("finishActivityOnSaveCompleted", true);
         startIntent(intent, REQUEST_OPEN_CONTACT_FORM);
       }catch(Exception e) {
+        Log.e(LOG_TAG, e.getMessage());
       }
     }
 
@@ -342,7 +381,7 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
       return null;
     }
   }
-  
+
     private void openDeviceContactPicker(Result result) {
       if (delegate != null) {
         delegate.setResult(result);
@@ -351,7 +390,7 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
         result.success(FORM_COULD_NOT_BE_OPEN);
       }
   }
-  
+
   private class ContactServiceDelegateOld extends BaseContactsServiceDelegate {
     private final PluginRegistry.Registrar registrar;
 
@@ -893,4 +932,62 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
     }
   }
 
+  class MyContentObserver extends ContentObserver {
+
+    /**
+     * Creates a content observer.
+     *
+     * @param handler The handler to run {@link #onChange} on, or null if none.
+     */
+    public MyContentObserver(Handler handler) {
+      super(handler);
+    }
+
+    @Override
+    public boolean deliverSelfNotifications() {
+      return false;
+    }
+
+    @Override
+    public void onChange(boolean selfChange) {
+      Log.d(LOG_TAG, "MyContentObserver - onChange(selfChange=" + selfChange + ")");
+      getContacts("getContacts", null, false, false, true, new StreamResult(contactsStreamHandler.eventSink));
+    }
+  }
+
+  private static class ContactsStreamHandler implements EventChannel.StreamHandler {
+    private EventChannel.EventSink eventSink;
+
+    @Override
+    public void onListen(Object o, EventChannel.EventSink eventSink) {
+      this.eventSink = eventSink;
+    }
+
+    @Override
+    public void onCancel(Object o) {
+      this.eventSink = null;
+    }
+  }
+
+  private static class StreamResult implements Result {
+    EventChannel.EventSink eventSink;
+    public StreamResult(EventChannel.EventSink eventSink) {
+      this.eventSink = eventSink;
+    }
+
+    @Override
+      public void success(@Nullable Object result) {
+        eventSink.success(result);
+      }
+
+      @Override
+      public void error(String errorCode, @Nullable String errorMessage, @Nullable Object errorDetails) {
+        eventSink.error(errorCode, errorMessage, errorDetails);
+      }
+
+      @Override
+      public void notImplemented() {
+        eventSink.error("notImplemented", null, null);
+      }
+  }
 }

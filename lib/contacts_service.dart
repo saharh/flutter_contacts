@@ -8,8 +8,9 @@ import 'package:quiver/core.dart';
 export 'share.dart';
 
 class ContactsService {
-  static const MethodChannel _channel =
-      MethodChannel('github.com/clovisnicolas/flutter_contacts');
+  static const MethodChannel _channel = MethodChannel('github.com/clovisnicolas/flutter_contacts');
+  static const EventChannel _contactsChannel = EventChannel("github.com/clovisnicolas/flutter_contacts/contacts_event_channel");
+  static StreamController<Iterable<Contact>> _contactsController;
 
   /// Fetches all contacts, or when specified, the contacts with a name
   /// matching [query]
@@ -28,6 +29,31 @@ class ContactsService {
       'iOSLocalizedLabels': iOSLocalizedLabels,
     });
     return contacts.map((m) => Contact.fromMap(m));
+  }
+
+  static Stream<Iterable<Contact>> listenContacts(
+      {String query,
+        bool withThumbnails = true,
+        bool photoHighResolution = true,
+        bool orderByGivenName = true,
+        bool iOSLocalizedLabels = true}) {
+    if (_contactsController == null) {
+      _contactsController = StreamController.broadcast();
+      _contactsController.addStream(_contactsChannel.receiveBroadcastStream().map((event) {
+        return List<Contact>.from(event?.map((e) {
+          return Contact.fromMap(e);
+        }));
+      }).cast());
+    }
+    _channel.invokeMethod('listenContacts', <String, dynamic>{
+      'query': query,
+      'withThumbnails': withThumbnails,
+      'photoHighResolution': photoHighResolution,
+      'orderByGivenName': orderByGivenName,
+      'iOSLocalizedLabels': iOSLocalizedLabels,
+    });
+
+    return _contactsController.stream;
   }
 
   /// Fetches all contacts, or when specified, the contacts with the phone
@@ -90,17 +116,19 @@ class ContactsService {
   static Future updateContact(Contact contact) =>
       _channel.invokeMethod('updateContact', Contact._toMap(contact));
 
-  static Future<Contact> openContactForm({bool iOSLocalizedLabels = true}) async {
+  static Future<Contact> openContactForm({String phone, bool iOSLocalizedLabels = true}) async {
     dynamic result = await _channel.invokeMethod('openContactForm',<String,dynamic>{
       'iOSLocalizedLabels': iOSLocalizedLabels,
+      'phone' : phone
     });
    return _handleFormOperation(result);
   }
 
-  static Future<Contact> openExistingContact(Contact contact, {bool iOSLocalizedLabels = true}) async {
+  static Future<Contact> openExistingContact(Contact contact, {bool edit = true, bool iOSLocalizedLabels = true}) async {
    dynamic result = await _channel.invokeMethod('openExistingContact',<String,dynamic>{
      'contact': Contact._toMap(contact),
      'iOSLocalizedLabels': iOSLocalizedLabels,
+     'edit' : edit,
    }, );
    return _handleFormOperation(result);
   }
