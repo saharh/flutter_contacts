@@ -70,7 +70,8 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
   private EventChannel contactsEventChannel;
   private ContactsStreamHandler contactsStreamHandler;
   private BaseContactsServiceDelegate delegate;
-  private boolean registeredObserver = false;
+//  private boolean registeredObserver = false;
+  private ContactsChangeObserver contactsChangesObserver;
 
   private final ExecutorService executor =
           new ThreadPoolExecutor(0, 10, 60, TimeUnit.SECONDS, new ArrayBlockingQueue<Runnable>(1000));
@@ -92,7 +93,7 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
     contactsEventChannel = new EventChannel(messenger, CONTACTS_EVENTS_CHANNEL);
     contactsStreamHandler = new ContactsStreamHandler();
     contactsEventChannel.setStreamHandler(contactsStreamHandler);
-    this.contentResolver = context.getContentResolver();
+    contentResolver = context.getContentResolver();
   }
 
   @Override
@@ -104,6 +105,10 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
 
   @Override
   public void onDetachedFromEngine(FlutterPluginBinding binding) {
+    if (contactsChangesObserver != null) {
+      contentResolver.unregisterContentObserver(contactsChangesObserver);
+      contactsChangesObserver = null;
+    }
     appContext = null;
     methodChannel.setMethodCallHandler(null);
     methodChannel = null;
@@ -117,6 +122,10 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
     switch(call.method){
       case "getContacts": {
         this.getContacts(call.method, (String) call.argument("query"), (boolean) call.argument("withThumbnails"), (boolean) call.argument("photoHighResolution"), (boolean) call.argument("orderByGivenName"), result);
+        break;
+      }
+      case "getContactByIdentifier": { // TODO iOS
+        this.getContactsForId(call.method, (String)call.argument("identifier"), (boolean)call.argument("withThumbnails"), (boolean)call.argument("photoHighResolution"), false, result);
         break;
       } case "listenContacts": {
         this.listenContacts(call.method, (String)call.argument("query"), (boolean)call.argument("withThumbnails"), (boolean)call.argument("photoHighResolution"), (boolean)call.argument("orderByGivenName"), result);
@@ -223,12 +232,17 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
   }
 
   @TargetApi(Build.VERSION_CODES.ECLAIR)
+  private void getContactsForId(String callMethod, String identifier, boolean withThumbnails, boolean photoHighResolution, boolean orderByGivenName, Result result) {
+    new GetContactsTask(callMethod, result, withThumbnails, photoHighResolution, orderByGivenName).executeOnExecutor(executor, identifier, false);
+  }
+
+  @TargetApi(Build.VERSION_CODES.ECLAIR)
   private void listenContacts(final String callMethod, final String query, final boolean withThumbnails, final boolean photoHighResolution, final boolean orderByGivenName, Result result) {
 //    getContacts(callMethod, query, withThumbnails, photoHighResolution, orderByGivenName, new StreamResult(contactsStreamHandler.eventSink));
-    if (!registeredObserver) {
+    if (contactsChangesObserver == null) {
       //TODO notifyForDescendants true or false?
-      contentResolver.registerContentObserver(ContactsContract.Data.CONTENT_URI, true, new MyContentObserver(new Handler()));
-      registeredObserver = true;
+      contactsChangesObserver = new ContactsChangeObserver(new Handler());
+      contentResolver.registerContentObserver(ContactsContract.Data.CONTENT_URI, true, contactsChangesObserver);
     }
     result.success(null);
   }
@@ -465,6 +479,7 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
         case "openDeviceContactPicker": contacts = getContactsFrom(getCursor(null, (String) params[0])); break;
         case "getContacts": contacts = getContactsFrom(getCursor((String) params[0], null)); break;
         case "getContactsForPhone": contacts = getContactsFrom(getCursorForPhone(((String) params[0]))); break;
+        case "getContactByIdentifier": contacts = getContactsFrom(getCursor(null, (String) params[0])); break;
         default: return null;
       }
 
@@ -932,14 +947,14 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
     }
   }
 
-  class MyContentObserver extends ContentObserver {
+  class ContactsChangeObserver extends ContentObserver {
 
     /**
      * Creates a content observer.
      *
      * @param handler The handler to run {@link #onChange} on, or null if none.
      */
-    public MyContentObserver(Handler handler) {
+    public ContactsChangeObserver(Handler handler) {
       super(handler);
     }
 

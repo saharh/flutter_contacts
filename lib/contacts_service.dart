@@ -14,6 +14,23 @@ class ContactsService {
 
   /// Fetches all contacts, or when specified, the contacts with a name
   /// matching [query]
+  static Future<Contact> getContactByIdentifier(
+      {String identifier,
+        bool withThumbnails = true,
+        bool photoHighResolution = true,
+        bool iOSLocalizedLabels = true}) async {
+    Iterable result = await _channel.invokeMethod('getContactByIdentifier', <String, dynamic>{
+      'identifier': identifier,
+      'withThumbnails': withThumbnails,
+      'photoHighResolution': photoHighResolution,
+      'iOSLocalizedLabels': iOSLocalizedLabels,
+    });
+    return result != null ? Contact.fromMap(result.first) : null;
+  }
+  
+  
+  /// Fetches all contacts, or when specified, the contacts with a name
+  /// matching [query]
   static Future<Iterable<Contact>> getContacts(
       {String query,
       bool withThumbnails = true,
