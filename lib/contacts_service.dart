@@ -18,27 +18,29 @@ class ContactsService {
       {String identifier,
         bool withThumbnails = true,
         bool photoHighResolution = true,
-        bool iOSLocalizedLabels = true}) async {
+        bool iOSLocalizedLabels = true,
+        bool androidLocalizedLabels = true}) async {
     Iterable result = await _channel.invokeMethod('getContactByIdentifier', <String, dynamic>{
       'identifier': identifier,
       'withThumbnails': withThumbnails,
       'photoHighResolution': photoHighResolution,
       'iOSLocalizedLabels': iOSLocalizedLabels,
+      'androidLocalizedLabels': androidLocalizedLabels,
     });
     return result != null ? Contact.fromMap(result.first) : null;
   }
-  
-  
+
+
   /// Fetches all contacts, or when specified, the contacts with a name
   /// matching [query]
-  static Future<Iterable<Contact>> getContacts(
+  static Future<ContactsResult> getContacts(
       {String query,
       bool withThumbnails = true,
       bool photoHighResolution = true,
       bool orderByGivenName = true,
       bool iOSLocalizedLabels = true,
       bool androidLocalizedLabels = true}) async {
-    Iterable contacts =
+    Map contactResult =
         await _channel.invokeMethod('getContacts', <String, dynamic>{
       'query': query,
       'withThumbnails': withThumbnails,
@@ -47,7 +49,8 @@ class ContactsService {
       'iOSLocalizedLabels': iOSLocalizedLabels,
       'androidLocalizedLabels': androidLocalizedLabels,
     });
-    return contacts.map((m) => Contact.fromMap(m));
+    // return contacts.map((m) => Contact.fromMap(m));
+    return ContactsResult.fromMap(contactResult);
   }
 
   static Stream<Iterable<Contact>> listenContacts(
@@ -77,15 +80,16 @@ class ContactsService {
 
   /// Fetches all contacts, or when specified, the contacts with the phone
   /// matching [phone]
-  static Future<Iterable<Contact>> getContactsForPhone(String phone,
+  static Future<ContactsByPhoneResult> getContactsForPhone(String phone,
       {bool withThumbnails = true,
       bool photoHighResolution = true,
       bool orderByGivenName = true,
       bool iOSLocalizedLabels = true,
       bool androidLocalizedLabels = true}) async {
-    if (phone == null || phone.isEmpty) return Iterable.empty();
+    // if (phone == null || phone.isEmpty) return Iterable.empty();
+    if (phone == null || phone.isEmpty) return new ContactsByPhoneResult(Iterable.empty(), {});
 
-    Iterable contacts =
+    Map result =
         await _channel.invokeMethod('getContactsForPhone', <String, dynamic>{
       'phone': phone,
       'withThumbnails': withThumbnails,
@@ -94,19 +98,20 @@ class ContactsService {
       'iOSLocalizedLabels': iOSLocalizedLabels,
       'androidLocalizedLabels': androidLocalizedLabels,
     });
-    return contacts.map((m) => Contact.fromMap(m));
+    // return contacts.map((m) => Contact.fromMap(m));
+    return ContactsByPhoneResult.fromMap(result);
   }
 
   /// Fetches all contacts, or when specified, the contacts with the email
   /// matching [email]
   /// Works only on iOS
-  static Future<Iterable<Contact>> getContactsForEmail(String email,
+  static Future<ContactsResult> getContactsForEmail(String email,
       {bool withThumbnails = true,
       bool photoHighResolution = true,
       bool orderByGivenName = true,
       bool iOSLocalizedLabels = true,
       bool androidLocalizedLabels = true}) async {
-    Iterable contacts =
+    Map result =
         await _channel.invokeMethod('getContactsForEmail', <String, dynamic>{
       'email': email,
       'withThumbnails': withThumbnails,
@@ -115,7 +120,8 @@ class ContactsService {
       'iOSLocalizedLabels': iOSLocalizedLabels,
       'androidLocalizedLabels': androidLocalizedLabels,
     });
-    return contacts.map((m) => Contact.fromMap(m));
+    // return contacts.map((m) => Contact.fromMap(m));
+    return ContactsResult.fromMap(result);
   }
 
   /// Loads the avatar for the given contact and returns it. If the user does
@@ -177,15 +183,20 @@ class ContactsService {
       'iOSLocalizedLabels': iOSLocalizedLabels,
       'androidLocalizedLabels': androidLocalizedLabels,
     });
+    ContactsResult res;
+    if (result is Map) {
+      res = ContactsResult.fromMap(result);
+      return res?.contacts?.isNotEmpty == true ? res.contacts.first : null;
+    }
     // result contains either :
     // - an Iterable of contacts containing 0 or 1 contact
     // - a FormOperationErrorCode value
-    if (result is Iterable) {
-      if (result.isEmpty) {
-        return null;
-      }
-      result = result.first;
-    }
+    // if (res?.contacts is Iterable) {
+    //   if (result.isEmpty) {
+    //     return null;
+    //   }
+    //   result = result.first;
+    // }
     return _handleFormOperation(result);
   }
 
@@ -222,6 +233,31 @@ enum FormOperationErrorCode {
   FORM_OPERATION_CANCELED,
   FORM_COULD_NOT_BE_OPEN,
   FORM_OPERATION_UNKNOWN_ERROR
+}
+
+class ContactsResult {
+  List<Contact> contacts;
+  ContactsResult(this.contacts);
+
+  ContactsResult.fromMap(Map m) {
+    try {
+      if (m["contacts"] is Iterable) {
+        contacts = List<Contact>.from(m["contacts"].map((m) => Contact.fromMap(m)).toList());
+      }
+    } catch (e) {
+      print(e);
+    }
+  }
+}
+
+class ContactsByPhoneResult extends ContactsResult {
+  Map<String, String> contactIdsToFoundPhones;
+
+  ContactsByPhoneResult(Iterable<Contact> contacts, this.contactIdsToFoundPhones): super(contacts);
+
+  ContactsByPhoneResult.fromMap(Map m) : super.fromMap(m) {
+    contactIdsToFoundPhones = m["contactIdsToFoundPhones"] != null ? Map.from(m["contactIdsToFoundPhones"]) : null;
+  }
 }
 
 class Contact {

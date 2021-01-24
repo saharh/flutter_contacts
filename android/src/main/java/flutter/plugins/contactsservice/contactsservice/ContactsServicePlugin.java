@@ -19,6 +19,7 @@ import android.provider.BaseColumns;
 import android.provider.ContactsContract;
 import android.text.TextUtils;
 import android.util.Log;
+import android.util.Pair;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -32,6 +33,8 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -254,7 +257,7 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
     }
     result.success(null);
   }
-  
+
   private void getContactsForPhone(String callMethod, String phone, boolean withThumbnails, boolean photoHighResolution, boolean orderByGivenName, boolean localizedLabels, Result result) {
     new GetContactsTask(callMethod, result, withThumbnails, photoHighResolution, orderByGivenName, localizedLabels).executeOnExecutor(executor, phone, true);
   }
@@ -471,7 +474,7 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
   }
 
   @TargetApi(Build.VERSION_CODES.CUPCAKE)
-  private class GetContactsTask extends AsyncTask<Object, Void, ArrayList<HashMap>> {
+  private class GetContactsTask extends AsyncTask<Object, Void, ContactsResult> {
 
     private String callMethod;
     private Result getContactResult;
@@ -490,12 +493,19 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
     }
 
     @TargetApi(Build.VERSION_CODES.ECLAIR)
-    protected ArrayList<HashMap> doInBackground(Object... params) {
+    protected ContactsResult doInBackground(Object... params) {
       ArrayList<Contact> contacts;
+      Map<String, String> contactIdsToFoundPhones = null;
       switch (callMethod) {
         case "openDeviceContactPicker": contacts = getContactsFrom(getCursor(null, (String) params[0]), localizedLabels); break;
         case "getContacts": contacts = getContactsFrom(getCursor((String) params[0], null), localizedLabels); break;
-        case "getContactsForPhone": contacts = getContactsFrom(getCursorForPhone(((String) params[0])), localizedLabels); break;
+        case "getContactsForPhone":{
+            Pair<Cursor, Map<String, String>> cursorForPhone = getCursorForPhone(((String) params[0]));
+            Cursor cursor = cursorForPhone != null ? cursorForPhone.first : null;
+            contactIdsToFoundPhones = cursorForPhone != null ? cursorForPhone.second : null;
+            contacts = getContactsFrom(cursor, localizedLabels);
+          break;
+        }
         case "getContactByIdentifier": contacts = getContactsFrom(getCursor(null, (String) params[0]), localizedLabels); break;
         default: return null;
       }
@@ -529,19 +539,26 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
       }
 
       //Transform the list of contacts to a list of Map
-      ArrayList<HashMap> contactMaps = new ArrayList<>();
-      for(Contact c : contacts){
-        contactMaps.add(c.toMap());
-      }
-
-      return contactMaps;
+//      ArrayList<HashMap> contactMaps = new ArrayList<>();
+//      for(Contact c : contacts){
+//        contactMaps.add(c.toMap());
+//      }
+        switch (callMethod) {
+            case "openDeviceContactPicker":
+            case "getContacts":
+            case "getContactByIdentifier":
+                return new ContactsResult(contacts);
+            case "getContactsForPhone":
+                return new ContactsByPhoneResult(contacts, contactIdsToFoundPhones);
+            default: return null;
+        }
     }
 
-    protected void onPostExecute(ArrayList<HashMap> result) {
+    protected void onPostExecute(ContactsResult result) {
       if (result == null) {
         getContactResult.notImplemented();
       } else {
-        getContactResult.success(result);
+        getContactResult.success(result.toMap());
       }
     }
   }
@@ -567,7 +584,7 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
     return contentResolver.query(ContactsContract.Data.CONTENT_URI, PROJECTION, selection, selectionArgs.toArray(new String[selectionArgs.size()]), null);
   }
 
-  private Cursor getCursorForPhone(String phone) {
+  private Pair<Cursor, Map<String, String>> getCursorForPhone(String phone) {
     if (phone.isEmpty())
       return null;
 
@@ -575,9 +592,13 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
     String[] projection = new String[]{BaseColumns._ID};
 
     ArrayList<String> contactIds = new ArrayList<>();
+    Map<String, String> contactIdsToFoundPhones = new HashMap<>();
     Cursor phoneCursor = contentResolver.query(uri, projection, null, null, null);
     while (phoneCursor != null && phoneCursor.moveToNext()){
-      contactIds.add(phoneCursor.getString(phoneCursor.getColumnIndex(BaseColumns._ID)));
+      String contactId = phoneCursor.getString(phoneCursor.getColumnIndex(BaseColumns._ID));
+      String foundPhone = phoneCursor.getString(phoneCursor.getColumnIndex(ContactsContract.PhoneLookup.NUMBER));
+      contactIdsToFoundPhones.put(contactId, foundPhone);
+      contactIds.add(contactId);
     }
     if (phoneCursor!= null)
       phoneCursor.close();
@@ -585,7 +606,8 @@ public class ContactsServicePlugin implements MethodCallHandler, FlutterPlugin, 
     if (!contactIds.isEmpty()) {
       String contactIdsListString = contactIds.toString().replace("[", "(").replace("]", ")");
       String contactSelection = ContactsContract.Data.CONTACT_ID + " IN " + contactIdsListString;
-      return contentResolver.query(ContactsContract.Data.CONTENT_URI, PROJECTION, contactSelection, null, null);
+      Cursor cursor = contentResolver.query(ContactsContract.Data.CONTENT_URI, PROJECTION, contactSelection, null, null);
+      return new Pair<>(cursor, contactIdsToFoundPhones);
     }
 
     return null;
