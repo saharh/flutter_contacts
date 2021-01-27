@@ -10,38 +10,37 @@ export 'share.dart';
 class ContactsService {
   static const MethodChannel _channel = MethodChannel('github.com/clovisnicolas/flutter_contacts');
   static const EventChannel _contactsChannel = EventChannel("github.com/clovisnicolas/flutter_contacts/contacts_event_channel");
-  static StreamController<Iterable<Contact>> _contactsController;
+  static StreamController<ContactsResult> _contactsController;
 
   /// Fetches all contacts, or when specified, the contacts with a name
   /// matching [query]
-  static Future<Contact> getContactByIdentifier(
-      {String identifier,
-        bool withThumbnails = true,
-        bool photoHighResolution = true,
-        bool iOSLocalizedLabels = true,
-        bool androidLocalizedLabels = true}) async {
-    Iterable result = await _channel.invokeMethod('getContactByIdentifier', <String, dynamic>{
+  static Future<ContactsResult> getContactByIdentifier({String identifier,
+    bool withThumbnails = true,
+    bool photoHighResolution = true,
+    bool iOSLocalizedLabels = true,
+    bool androidLocalizedLabels = true}) async {
+    Map result = await _channel.invokeMethod('getContactByIdentifier', <String, dynamic>{
       'identifier': identifier,
       'withThumbnails': withThumbnails,
       'photoHighResolution': photoHighResolution,
       'iOSLocalizedLabels': iOSLocalizedLabels,
       'androidLocalizedLabels': androidLocalizedLabels,
     });
-    return result != null ? Contact.fromMap(result.first) : null;
+    // return result != null ? Contact.fromMap(result.first) : null;
+    return ContactsResult.fromMap(result);
   }
 
 
   /// Fetches all contacts, or when specified, the contacts with a name
   /// matching [query]
-  static Future<ContactsResult> getContacts(
-      {String query,
-      bool withThumbnails = true,
-      bool photoHighResolution = true,
-      bool orderByGivenName = true,
-      bool iOSLocalizedLabels = true,
-      bool androidLocalizedLabels = true}) async {
+  static Future<ContactsResult> getContacts({String query,
+    bool withThumbnails = true,
+    bool photoHighResolution = true,
+    bool orderByGivenName = true,
+    bool iOSLocalizedLabels = true,
+    bool androidLocalizedLabels = true}) async {
     Map contactResult =
-        await _channel.invokeMethod('getContacts', <String, dynamic>{
+    await _channel.invokeMethod('getContacts', <String, dynamic>{
       'query': query,
       'withThumbnails': withThumbnails,
       'photoHighResolution': photoHighResolution,
@@ -53,19 +52,14 @@ class ContactsService {
     return ContactsResult.fromMap(contactResult);
   }
 
-  static Stream<Iterable<Contact>> listenContacts(
-      {String query,
-        bool withThumbnails = true,
-        bool photoHighResolution = true,
-        bool orderByGivenName = true,
-        bool iOSLocalizedLabels = true}) {
+  static Stream<ContactsResult> listenContacts({String query,
+    bool withThumbnails = true,
+    bool photoHighResolution = true,
+    bool orderByGivenName = true,
+    bool iOSLocalizedLabels = true}) {
     if (_contactsController == null) {
       _contactsController = StreamController.broadcast();
-      _contactsController.addStream(_contactsChannel.receiveBroadcastStream().map((event) {
-        return List<Contact>.from(event?.map((e) {
-          return Contact.fromMap(e);
-        }));
-      }).cast());
+      _contactsController.addStream(_contactsChannel.receiveBroadcastStream().map((event) => ContactsResult.fromMap(event)).cast());
     }
     _channel.invokeMethod('listenContacts', <String, dynamic>{
       'query': query,
@@ -82,15 +76,15 @@ class ContactsService {
   /// matching [phone]
   static Future<ContactsByPhoneResult> getContactsForPhone(String phone,
       {bool withThumbnails = true,
-      bool photoHighResolution = true,
-      bool orderByGivenName = true,
-      bool iOSLocalizedLabels = true,
-      bool androidLocalizedLabels = true}) async {
+        bool photoHighResolution = true,
+        bool orderByGivenName = true,
+        bool iOSLocalizedLabels = true,
+        bool androidLocalizedLabels = true}) async {
     // if (phone == null || phone.isEmpty) return Iterable.empty();
     if (phone == null || phone.isEmpty) return new ContactsByPhoneResult(Iterable.empty(), {});
 
     Map result =
-        await _channel.invokeMethod('getContactsForPhone', <String, dynamic>{
+    await _channel.invokeMethod('getContactsForPhone', <String, dynamic>{
       'phone': phone,
       'withThumbnails': withThumbnails,
       'photoHighResolution': photoHighResolution,
@@ -107,12 +101,12 @@ class ContactsService {
   /// Works only on iOS
   static Future<ContactsResult> getContactsForEmail(String email,
       {bool withThumbnails = true,
-      bool photoHighResolution = true,
-      bool orderByGivenName = true,
-      bool iOSLocalizedLabels = true,
-      bool androidLocalizedLabels = true}) async {
+        bool photoHighResolution = true,
+        bool orderByGivenName = true,
+        bool iOSLocalizedLabels = true,
+        bool androidLocalizedLabels = true}) async {
     Map result =
-        await _channel.invokeMethod('getContactsForEmail', <String, dynamic>{
+    await _channel.invokeMethod('getContactsForEmail', <String, dynamic>{
       'email': email,
       'withThumbnails': withThumbnails,
       'photoHighResolution': photoHighResolution,
@@ -128,7 +122,7 @@ class ContactsService {
   /// not have an avatar, then `null` is returned in that slot. Only implemented
   /// on Android.
   static Future<Uint8List> getAvatar(final Contact contact,
-          {final bool photoHighRes = true}) =>
+      {final bool photoHighRes = true}) =>
       _channel.invokeMethod('getAvatar', <String, dynamic>{
         'contact': Contact._toMap(contact),
         'photoHighResolution': photoHighRes,
@@ -146,38 +140,36 @@ class ContactsService {
   static Future updateContact(Contact contact) =>
       _channel.invokeMethod('updateContact', Contact._toMap(contact));
 
-  static Future<Contact> openContactForm(
-      {String phone, bool iOSLocalizedLabels = true,
-      bool androidLocalizedLabels = true}) async {
+  static Future<Contact> openContactForm({String phone, bool iOSLocalizedLabels = true,
+    bool androidLocalizedLabels = true}) async {
     dynamic result =
-        await _channel.invokeMethod('openContactForm', <String, dynamic>{
+    await _channel.invokeMethod('openContactForm', <String, dynamic>{
       'iOSLocalizedLabels': iOSLocalizedLabels,
       'androidLocalizedLabels': androidLocalizedLabels,
-      'phone' : phone
+      'phone': phone
     });
     return _handleFormOperation(result);
   }
 
   static Future<Contact> openExistingContact(Contact contact,
       {bool iOSLocalizedLabels = true,
-      bool androidLocalizedLabels = true,
-      bool edit = true}) async {
+        bool androidLocalizedLabels = true,
+        bool edit = true}) async {
     dynamic result = await _channel.invokeMethod(
       'openExistingContact',
       <String, dynamic>{
         'contact': Contact._toMap(contact),
         'iOSLocalizedLabels': iOSLocalizedLabels,
         'androidLocalizedLabels': androidLocalizedLabels,
-	'edit' : edit,
+        'edit': edit,
       },
     );
     return _handleFormOperation(result);
   }
 
   // Displays the device/native contact picker dialog and returns the contact selected by the user
-  static Future<Contact> openDeviceContactPicker(
-      {bool iOSLocalizedLabels = true,
-      bool androidLocalizedLabels = true}) async {
+  static Future<Contact> openDeviceContactPicker({bool iOSLocalizedLabels = true,
+    bool androidLocalizedLabels = true}) async {
     dynamic result = await _channel
         .invokeMethod('openDeviceContactPicker', <String, dynamic>{
       'iOSLocalizedLabels': iOSLocalizedLabels,
@@ -226,6 +218,7 @@ class FormOperationException implements Exception {
   final FormOperationErrorCode errorCode;
 
   const FormOperationException({this.errorCode});
+
   String toString() => 'FormOperationException: $errorCode';
 }
 
@@ -237,6 +230,7 @@ enum FormOperationErrorCode {
 
 class ContactsResult {
   List<Contact> contacts;
+
   ContactsResult(this.contacts);
 
   ContactsResult.fromMap(Map m) {
@@ -253,7 +247,7 @@ class ContactsResult {
 class ContactsByPhoneResult extends ContactsResult {
   Map<String, String> contactIdsToFoundPhones;
 
-  ContactsByPhoneResult(Iterable<Contact> contacts, this.contactIdsToFoundPhones): super(contacts);
+  ContactsByPhoneResult(Iterable<Contact> contacts, this.contactIdsToFoundPhones) : super(contacts);
 
   ContactsByPhoneResult.fromMap(Map m) : super.fromMap(m) {
     contactIdsToFoundPhones = m["contactIdsToFoundPhones"] != null ? Map.from(m["contactIdsToFoundPhones"]) : null;
@@ -299,7 +293,7 @@ class Contact {
 
   String initials() {
     return ((this.givenName?.isNotEmpty == true ? this.givenName[0] : "") +
-            (this.familyName?.isNotEmpty == true ? this.familyName[0] : ""))
+        (this.familyName?.isNotEmpty == true ? this.familyName[0] : ""))
         .toUpperCase();
   }
 
@@ -344,7 +338,8 @@ class Contact {
 
     final birthday = contact.birthday == null
         ? null
-        : "${contact.birthday.year.toString()}-${contact.birthday.month.toString().padLeft(2, '0')}-${contact.birthday.day.toString().padLeft(2, '0')}";
+        : "${contact.birthday.year.toString()}-${contact.birthday.month.toString().padLeft(2, '0')}-${contact.birthday.day.toString()
+        .padLeft(2, '0')}";
 
     return {
       "identifier": contact.identifier,
@@ -371,7 +366,8 @@ class Contact {
   }
 
   /// The [+] operator fills in this contact's empty fields with the fields from [other]
-  operator +(Contact other) => Contact(
+  operator +(Contact other) =>
+      Contact(
         givenName: this.givenName ?? other.givenName,
         middleName: this.middleName ?? other.middleName,
         prefix: this.prefix ?? other.prefix,
@@ -384,24 +380,24 @@ class Contact {
         emails: this.emails == null
             ? other.emails
             : this
-                .emails
-                .toSet()
-                .union(other.emails?.toSet() ?? Set())
-                .toList(),
+            .emails
+            .toSet()
+            .union(other.emails?.toSet() ?? Set())
+            .toList(),
         phones: this.phones == null
             ? other.phones
             : this
-                .phones
-                .toSet()
-                .union(other.phones?.toSet() ?? Set())
-                .toList(),
+            .phones
+            .toSet()
+            .union(other.phones?.toSet() ?? Set())
+            .toList(),
         postalAddresses: this.postalAddresses == null
             ? other.postalAddresses
             : this
-                .postalAddresses
-                .toSet()
-                .union(other.postalAddresses?.toSet() ?? Set())
-                .toList(),
+            .postalAddresses
+            .toSet()
+            .union(other.postalAddresses?.toSet() ?? Set())
+            .toList(),
         avatar: this.avatar ?? other.avatar,
         birthday: this.birthday ?? other.birthday,
       );
@@ -466,13 +462,13 @@ class Contact {
 }
 
 class PostalAddress {
-  PostalAddress(
-      {this.label,
-      this.street,
-      this.city,
-      this.postcode,
-      this.region,
-      this.country});
+  PostalAddress({this.label,
+    this.street,
+    this.city,
+    this.postcode,
+    this.region,
+    this.country});
+
   String label, street, city, postcode, region, country;
 
   PostalAddress.fromMap(Map m) {
@@ -507,7 +503,8 @@ class PostalAddress {
     ].where((s) => s != null));
   }
 
-  static Map _toMap(PostalAddress address) => {
+  static Map _toMap(PostalAddress address) =>
+      {
         "label": address.label,
         "street": address.street,
         "city": address.city,
